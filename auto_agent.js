@@ -20,24 +20,28 @@ async function runDailyAgent() {
   await sendTelegram("✅ 1/4: اتصال بوت تيليجرام شغال بنجاح يا كابتن حسين!\n⏳ جارٍ فحص اتصال Groq و Composio وحساب إنستغرام...");
 
   console.log("🔍 2. فحص اتصال Composio وإنستغرام...");
-  const composio = new OpenAIToolSet({ apiKey: process.env.COMPOSIO_API_KEY });
-  const entity = await composio.getEntity("default");
+const composio = new OpenAIToolSet({ apiKey: process.env.COMPOSIO_API_KEY });
+const entity = await composio.getEntity("default");
 
-  let igUserId = null;
-  let igUsername = "غير معروف";
-  try {
-    const userInfo = await entity.execute({
-      action: "INSTAGRAM_GET_USER_INFO",
-      params: {}
-    });
-    console.log("📋 بيانات حساب إنستغرام من Composio:", JSON.stringify(userInfo));
-    igUserId = userInfo?.data?.id || userInfo?.data?.ig_user_id || userInfo?.id;
-    igUsername = userInfo?.data?.username || userInfo?.data?.name || "متصل";
-    await sendTelegram(`✅ 2/4: اتصال Composio وإنستغرام ناجح!\n👤 الحساب المربوط: @${igUsername}\n🆔 معرف الحساب: ${igUserId}`);
-  } catch (err) {
-    await sendTelegram(`⚠️ تنبيه في اتصال Composio/Instagram:\n${err.message}`);
-    throw err;
-  }
+const instagramUsername = process.env.INSTAGRAM_USERNAME || "hu.gym";
+
+let igUserId = null;
+let igUsername = "غير معروف";
+try {
+  const userInfo = await entity.execute({
+    action: "INSTAGRAM_GET_USER_INFO",
+    params: {
+      username: instagramUsername
+    }
+  });
+  console.log("📋 بيانات حساب إنستغرام من Composio:", JSON.stringify(userInfo));
+  igUserId = userInfo?.data?.id || userInfo?.data?.ig_user_id || userInfo?.id;
+  igUsername = userInfo?.data?.username || userInfo?.data?.name || instagramUsername || "متصل";
+  await sendTelegram(`✅ 2/4: اتصال Composio وإنستغرام ناجح!\n👤 الحساب المربوط: @${igUsername}\n🆔 معرف الحساب: ${igUserId}`);
+} catch (err) {
+  await sendTelegram(`⚠️ تنبيه في اتصال Composio/Instagram:\n${err.message}`);
+  throw err;
+}
 
   console.log("🔍 3. توليد المحتوى العلمي عبر Groq...");
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });

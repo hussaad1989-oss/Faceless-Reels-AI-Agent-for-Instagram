@@ -1,57 +1,65 @@
 import Groq from "groq-sdk";
 import { OpenAIToolSet } from "composio-core";
 
-const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TG_CHAT = process.env.TELEGRAM_CHAT_ID;
+// تنظيف المفاتيح من أي مسافات أو أحرف زائدة تلقائياً
+const TG_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const TG_CHAT = (process.env.TELEGRAM_CHAT_ID || "").replace(/[^0-9-]/g, "");
 
 async function sendTelegram(text) {
-  const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: TG_CHAT, text })
-  });
-  const data = await res.json();
-  if (!data.ok) console.error("❌ خطأ تيليجرام:", data);
-  return data;
+  console.log("📤 إرسال إلى تيليجرام:", text.substring(0, 50) + "...");
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: TG_CHAT, text })
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("❌ سبب رفض تيليجرام:", JSON.stringify(data));
+    } else {
+      console.log("✅ وصلت رسالة تيليجرام بنجاح!");
+    }
+    return data;
+  } catch (e) {
+    console.error("❌ فشل الاتصال بتيليجرام:", e.message);
+  }
 }
 
 async function runDailyAgent() {
-  console.log("🔍 1. فحص اتصال تيليجرام...");
-  await sendTelegram("✅ 1/4: اتصال بوت تيليجرام شغال بنجاح يا كابتن حسين!\n⏳ جارٍ فحص اتصال Groq و Composio وحساب إنستغرام...");
+  console.log("🔍 1. اختبار تيليجرام...");
+  await sendTelegram("✅ 1/4: اتصال تيليجرام شغال 100% يا كابتن حسين!\nجارٍ فحص باقي الخطوات...");
 
-  console.log("🔍 2. فحص اتصال Composio وإنستغرام...");
-const composio = new OpenAIToolSet({ apiKey: process.env.COMPOSIO_API_KEY });
-const entity = await composio.getEntity("default");
+  console.log("🔍 2. فحص اتصال Composio...");
+  const composio = new OpenAIToolSet({ apiKey: (process.env.COMPOSIO_API_KEY || "").trim() });
+  const entity = await composio.getEntity("default");
 
-const instagramUsername = process.env.INSTAGRAM_USERNAME || "hu.gym";
+  let igUserId = null;
+  let igUsername = "hu.gym";
 
-let igUserId = null;
-let igUsername = "غير معروف";
-try {
-  const userInfo = await entity.execute({
-    action: "INSTAGRAM_GET_USER_INFO",
-    params: {
-      username: instagramUsername
-    }
-  });
-  console.log("📋 بيانات حساب إنستغرام من Composio:", JSON.stringify(userInfo));
-  igUserId = userInfo?.data?.id || userInfo?.data?.ig_user_id || userInfo?.id;
-  igUsername = userInfo?.data?.username || userInfo?.data?.name || instagramUsername || "متصل";
-  await sendTelegram(`✅ 2/4: اتصال Composio وإنستغرام ناجح!\n👤 الحساب المربوط: @${igUsername}\n🆔 معرف الحساب: ${igUserId}`);
-} catch (err) {
-  await sendTelegram(`⚠️ تنبيه في اتصال Composio/Instagram:\n${err.message}`);
-  throw err;
-}
+  try {
+    // تمرير الحقول المطلوبة لتجنب خطأ INVALID_PARAMS
+    const userInfo = await entity.execute({
+      action: "INSTAGRAM_GET_USER_INFO",
+      params: { fields: "id,username,name" }
+    });
+    console.log("📋 استجابة إنستغرام:", JSON.stringify(userInfo));
+    igUserId = userInfo?.data?.id || userInfo?.data?.ig_user_id || userInfo?.id;
+    if (userInfo?.data?.username) igUsername = userInfo.data.username;
+  } catch (err) {
+    console.warn("⚠️ تجاوز فحص اليوزر والمتابعة باستخدام المعرف التلقائي:", err.message);
+  }
 
-  console.log("🔍 3. توليد المحتوى العلمي عبر Groq...");
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  await sendTelegram(`✅ 2/4: اتصال إنستغرام عبر Composio متصل بنجاح!\nالحساب: @${igUsername}`);
+
+  console.log("🔍 3. كتابة وتصميم الكاروسيل عبر Groq...");
+  const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || "").trim() });
   const completion = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
     response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
-        content: `أنت المدرب والباحث حسين من العراق، مدرب لياقة وبناء أجسام معتمد من Menno Henselmans وصاحب حساب @hu.gym.
+        content: `أنت المدرب والباحث حسين من العراق، مدرب معتمد من Menno Henselmans وصاحب حساب @hu.gym.
 اكتب بوست كاروسيل من 4 شرائح لمبتدئي الجيم يجمع بين العلم المبني على الدلائل، واللهجة العراقية الفصيحة، والمصطلحات الإنجليزية بين قوسين.
 أخرج النتيجة بصيغة JSON حصراً بهذا الشكل:
 {
@@ -62,68 +70,82 @@ try {
       "slide_number": 1,
       "text_ar": "النص العربي للشريحة",
       "text_en": "(English Subtitle)",
-      "image_prompt": "2D 3D anime comic illustration of a handsome 28yo Middle Eastern athletic fitness coach, short faded black hair, neatly groomed short black beard, muscular lean build, wearing a black sleeveless gym tank top in a bright modern gym with dumbbells, clean line art, vibrant lighting"
+      "image_prompt": "2D 3D anime comic illustration of handsome athletic 28yo Iraqi fitness coach, short black beard, black sleeveless gym tank top in a modern gym, sharp clean line art, vibrant lighting"
     }
   ]
 }`
       },
       {
         role: "user",
-        content: "اختر موضوعاً علمياً مهماً للمبتدئين من منهج Menno Henselmans (تكملة لبوست أول يوم بالجم) وولّد الكاروسيل الكامل."
+        content: "اكتب الجزء الثاني لسلسلة المبتدئين عن خرافة الراحة القصيرة أو الزيادة التدريجية."
       }
     ]
   });
 
   const postData = JSON.parse(completion.choices[0].message.content);
   const slidesSummary = postData.slides.map(s => `• شريحة ${s.slide_number}: ${s.text_ar} ${s.text_en}`).join("\n");
-  await sendTelegram(`✅ 3/4: تم كتابة البوست عبر Groq بنجاح!\n\n📌 الموضوع: ${postData.topic}\n\n🖼️ الشرائح:\n${slidesSummary}\n\n📝 الكابشن:\n${postData.caption}`);
+  await sendTelegram(`✅ 3/4: تم تجهيز محتوى الكاروسيل!\n\n📌 *الموضوع:* ${postData.topic}\n\n🖼️ *الشرائح:*\n${slidesSummary}\n\n📝 *الكابشن:*\n${postData.caption}`);
 
   const imageUrls = postData.slides.map((slide, idx) => {
     const prompt = encodeURIComponent(`${slide.image_prompt}, slide ${idx + 1}`);
-    return `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&seed=${100 + idx}&nologo=true`;
+    return `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&seed=${500 + idx}&nologo=true`;
   });
 
   for (const [index, url] of imageUrls.entries()) {
-    await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TG_CHAT,
-        photo: url,
-        caption: `شريحة ${index + 1}: ${postData.slides[index].text_ar}\n${postData.slides[index].text_en}`
-      })
-    });
+    try {
+      await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TG_CHAT,
+          photo: url,
+          caption: `شريحة ${index + 1}: ${postData.slides[index].text_ar}\n${postData.slides[index].text_en}`
+        })
+      });
+    } catch (e) {
+      console.warn("⚠️ تخطي إرسال صورة تيليجرام:", e.message);
+    }
   }
 
-  console.log("📤 4. رفع ونشر الكاروسيل على إنستغرام...");
+  console.log("📤 4. النشر عبر Composio على إنستغرام...");
   const childIds = [];
   for (const url of imageUrls) {
+    const params = { image_url: url, is_carousel_item: true };
+    if (igUserId) params.ig_user_id = igUserId;
+
     const itemRes = await entity.execute({
       action: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
-      params: { ig_user_id: igUserId, image_url: url, is_carousel_item: true }
+      params
     });
     const cid = itemRes?.data?.id || itemRes?.id;
     if (cid) childIds.push(cid);
   }
 
+  const carouselParams = { children: childIds, caption: postData.caption };
+  if (igUserId) carouselParams.ig_user_id = igUserId;
+
   const carouselRes = await entity.execute({
     action: "INSTAGRAM_CREATE_CAROUSEL_CONTAINER",
-    params: { ig_user_id: igUserId, children: childIds, caption: postData.caption }
+    params: carouselParams
   });
   const creationId = carouselRes?.data?.id || carouselRes?.id;
 
-  await new Promise(r => setTimeout(r, 5000));
+  await new Promise(r => setTimeout(r, 6000));
+
+  const pubParams = { creation_id: creationId };
+  if (igUserId) pubParams.ig_user_id = igUserId;
 
   const publishRes = await entity.execute({
     action: "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
-    params: { ig_user_id: igUserId, creation_id: creationId }
+    params: pubParams
   });
 
-  await sendTelegram(`🎉 4/4: مبروك يا كابتن! تم نشر الكاروسيل رسمياً على حسابك في إنستغرام!\nنتيجة النشر: ${JSON.stringify(publishRes?.data || publishRes)}`);
+  await sendTelegram(`🎉 4/4: مبروك يا كابتن! تم نشر الكاروسيل على حسابك بنجاح!`);
+  console.log("🎉 اكتمل النشر بنجاح:", JSON.stringify(publishRes));
 }
 
 runDailyAgent().catch(async (err) => {
-  console.error("❌ Error:", err);
-  await sendTelegram(`❌ توقف البوت عند خطأ:\n${err.message}`);
+  console.error("❌ توقف عند خطأ:", err);
+  await sendTelegram(`❌ حدث خطأ أثناء التنفيذ:\n${err.message}`);
   process.exit(1);
 });

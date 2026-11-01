@@ -13,12 +13,46 @@ async function sendTelegram(text) {
     });
     return await res.json();
   } catch (e) {
-    console.error("❌ خطأ تيليجرام:", e.message);
+    console.error("خطأ تيليجرام:", e?.message || e);
   }
 }
 
+// بنك دراسات علمية عميقة (دراسة واحدة مفصلة لكل يوم بالتفصيل العلمي والعملي)
+const STUDIES_DATABASE = [
+  {
+    topic: "خرافة الراحة دقيقة واحدة: ليش ترتاح 3 دقائق حتى تبني ضعف العضلات؟",
+    researcher: "Schoenfeld et al. (2016)",
+    journal: "Journal of Strength and Conditioning Research",
+    pubmed_url: "https://pubmed.ncbi.nlm.nih.gov/26605807/",
+    experiment: "قسّموا المتدربين لمجموعتين لـ 8 أسابيع بنفس التمارين: مجموعة ترتاح 60 ثانية، ومجموعة ترتاح 3 دقائق كاملة بين الجولات.",
+    results: "مجموعة الـ 3 دقائق حققت تضخيماً عضلياً وزيادة في القوة تعادل ضعف مجموعة الدقيقة الواحدة! لأن العضلة تسترجع مخازن الـ ATP بالكامل وتشيل أوزان وجودة أعلى.",
+    application: "بالتمارين المركبة (بنش، سكوات، ديدليفت): عوف الموبايل وارتاح 2.5 إلى 3 دقائق كاملة. بتمارين العزل (باي، تراي): ارتاح دقيقة ونصف.",
+    takeaway_benefit: "راح تستفاد: أوزانك بالجم تصعد باستمرار، عضلاتك تكبر بجهد أقل وبدون إنهاك عصبي، وتختصر شهور من التخبط!"
+  },
+  {
+    topic: "كمية البروتين اليومية: ليش الـ 1.6 غرام كافية وخرافة الـ 3 غرام تضيع فلوسك؟",
+    researcher: "Morton et al. (2018) & Menno Henselmans",
+    journal: "British Journal of Sports Medicine",
+    pubmed_url: "https://pubmed.ncbi.nlm.nih.gov/28698222/",
+    experiment: "حللوا 49 دراسة علمية على أكثر من 1800 متدرب لمعرفة أقصى كمية بروتين يستجيب لها تخليق البروتين العضلي (MPS).",
+    results: "فوق 1.6 غرام بروتين لكل كغم من وزن الجسم، توقفت العضلات عن الاستفادة الإضافية تماماً، والزيادة تحولت لطاقة عادية دون أي بناء عضلي زائد.",
+    application: "اضرب وزن جسمك في 1.6 إلى 1.8 فقط ووزعها على 3-4 وجبات يومية غنية بالأحماض الأمينية (Leucine).",
+    takeaway_benefit: "راح تستفاد: توفر فلوس المكملات والأكل الزائد، تتخلص من مشاكل الهضم، وتغذي عضلاتك بالرقم العلمي المثبت 100%!"
+  },
+  {
+    topic: "المدى الحركي الكامل (Full ROM): ليش نصف النزول بالوزن الثقيل يضيع وقتك؟",
+    researcher: "Pallarés et al. (2021) & Wolf et al. (2023)",
+    journal: "European Journal of Applied Physiology",
+    pubmed_url: "https://pubmed.ncbi.nlm.nih.gov/33977835/",
+    experiment: "قارنوا بين مجموعتين: الأولى تتمرن بمدى حركي كامل مع إطالة العضلة للآخر، والثانية بنصف مدى حركي وأوزان أثقل بكثير.",
+    results: "المدى الحركي الكامل حقق نمواً عضلياً أعلى بـ 30%، لأن وضعية الإطالة تحت الوزن تحفز نمواً فسيولوجياً خاصاً يسمى (Stretch-Mediated Hypertrophy).",
+    application: "قلل الوزن 20%، انزل لآخر مدى حركي مريح للمفصل، واثبت ثانية واحدة بأسفل التكرار قبل الدفع.",
+    takeaway_benefit: "راح تستفاد: تحمي مفاصلك وأوتارك من الإصابات، وتحفز كل ألياف العضلة بوزن خفيف وأمان كامل!"
+  }
+];
+
 async function runDailyAgent() {
-  await sendTelegram("✅ 1/4: اتصال تيليجرام شغال 100% يا كابتن حسين!\nجارٍ فحص باقي الخطوات...");
+  await sendTelegram("✅ 1/4: فحص اتصال تيليجرام بنجاح يا كابتن حسين!");
 
   const composio = new OpenAIToolSet({ apiKey: (process.env.COMPOSIO_API_KEY || "").trim() });
   const entity = await composio.getEntity("default");
@@ -35,67 +69,76 @@ async function runDailyAgent() {
     igUserId = userInfo?.data?.id || userInfo?.data?.ig_user_id || userInfo?.id;
     if (userInfo?.data?.username) igUsername = userInfo.data.username;
   } catch (err) {
-    console.warn("المتابعة بالمعرف التلقائي:", err.message);
+    console.warn("استخدام المعرف التلقائي:", err?.message || err);
   }
 
   await sendTelegram(`✅ 2/4: اتصال إنستغرام عبر Composio متصل بنجاح!\nالحساب: @${igUsername}`);
 
-  // استبعاد موديلات الحماية (guard/whisper) واختيار موديل المحادثة الفعلي
+  // اختيار موضوع علمي واحد فقط للتعمق فيه بالكامل
+  const study = STUDIES_DATABASE[Math.floor(Math.random() * STUDIES_DATABASE.length)];
+
   const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || "").trim() });
   const modelsList = await groq.models.list();
-  
   const chatModels = modelsList.data
     .map(m => m.id)
     .filter(id => !id.includes("guard") && !id.includes("whisper") && !id.includes("safeguard"));
 
-  console.log("الموديلات المتاحة للمحادثة:", chatModels);
-
   const chosenModel = chatModels.find(id => id.includes("llama-3") || id.includes("mixtral") || id.includes("gemma")) || chatModels[0];
-  console.log("🎯 الموديل المختار:", chosenModel);
 
-  // توليد كاروسيل احترافي من 6 شرائح بهوية حسابك
   const completion = await groq.chat.completions.create({
     model: chosenModel,
-    response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
         content: `أنت المدرب والباحث حسين من العراق، مدرب معتمد من Menno Henselmans وصاحب حساب @hu.gym.
-اكتب بوست كاروسيل متكامل من 6 شرائح لمبتدئي الجيم يجمع بين العلم المبني على الدلائل، واللهجة العراقية الفصيحة، والمصطلحات الإنجليزية بين قوسين.
-التزم بهوية الألوان (عنوان عربي عريض أصفر كريمي مع إطار أسود، وترجمة إنجليزية بيضاء) والشخصية الكرتونية الرياضية الثابتة.
-أخرج النتيجة بصيغة JSON حصراً بهذا الشكل:
+اكتب بوست كاروسيل من 6 شرائح لمبتدئي الجيم يركز على دراسة علمية واحدة فقط ويشرحها بالتفصيل الممل بأسلوب عراقي علمي فصيح ومحبب، وينتهي دائماً بـ "زبدة الموضوع: شنو راح تستفاد من هذا الحجي؟".
+
+بيانات الدراسة العلمية المعتمدة:
+- موضوع البوست: ${study.topic}
+- الباحث والمصدر: ${study.researcher} في ${study.journal}
+- تفاصيل التجربة: ${study.experiment}
+- النتيجة والفسيولوجيا: ${study.results}
+- التطبيق العملي بالجم: ${study.application}
+- زبدة الموضوع وفائدته للمبتدئ: ${study.takeaway_benefit}
+- رابط البحث على PubMed: ${study.pubmed_url}
+
+المطلوب: إرجاع النتيجة حصراً بصيغة JSON:
 {
-  "topic": "عنوان الموضوع",
-  "caption": "الكابشن الكامل مع 5 هاشتاغات للإمارات (#DubaiFitness #UAEGym #لياقة_دبي #DubaiPersonalTrainer #تمارين_الامارات)",
+  "topic": "${study.topic}",
+  "caption": "كابشن عراقي مفصل ومقنع ككوتش فاهم، يشرح التجربة والأرقام، ويبرز فقرة 'زبدة الموضوع: شنو تستفاد؟'، ومذيل برابط الدراسة: ${study.pubmed_url} و5 هاشتاغات للإمارات (#DubaiFitness #UAEGym #لياقة_دبي #DubaiPersonalTrainer #تمارين_الامارات)",
   "slides": [
-    {
-      "slide_number": 1,
-      "text_ar": "النص العربي للشريحة",
-      "text_en": "(English Subtitle)",
-      "image_prompt": "2D 3D anime comic illustration of handsome athletic 28yo Iraqi fitness coach, short black beard, black sleeveless gym tank top, in modern bright gym, bold warm cream yellow text styling, sharp clean anime art, 4:5 ratio"
-    }
+    { "slide_number": 1, "text_ar": "${study.topic}", "text_en": "(Evidence-Based Gym Guide)", "image_prompt": "2D 3D anime comic illustration handsome athletic 28yo Iraqi fitness coach, short black beard, black gym tank top, bright modern gym, bold cream yellow text style, 4:5 ratio" },
+    { "slide_number": 2, "text_ar": "الغلط اللي يوكع بيه أغلب المبتدئين بالجم", "text_en": "(The Common Mistake)", "image_prompt": "2D 3D anime comic illustration coach observing tired gym beginner making a training mistake in gym, 4:5 ratio" },
+    { "slide_number": 3, "text_ar": "شنو سوت التجربة العلمية بالضبط؟ (${study.researcher})", "text_en": "(The Scientific Experiment)", "image_prompt": "2D 3D anime comic illustration coach explaining research data board in gym, 4:5 ratio" },
+    { "slide_number": 4, "text_ar": "النتيجة بالأرقام والفسيولوجيا", "text_en": "(The Real Science & Data)", "image_prompt": "2D 3D anime comic illustration coach explaining muscle fibers and energy recovery, 4:5 ratio" },
+    { "slide_number": 5, "text_ar": "التطبيق العملي: شلون تسويها بتمرينك من باجر؟", "text_en": "(Step-by-Step Gym Protocol)", "image_prompt": "2D 3D anime comic illustration coach demonstrating strict perfect exercise execution in gym, 4:5 ratio" },
+    { "slide_number": 6, "text_ar": "زبدة الموضوع: شنو راح تستفاد من هذا الحجي؟", "text_en": "(The Bottom Line & Benefits)", "image_prompt": "2D 3D anime comic illustration coach giving confident thumbs up with scientific study notes in gym, 4:5 ratio" }
   ]
 }`
       },
       {
         role: "user",
-        content: "اكتب كاروسيل علمي من 6 شرائح للمبتدئين يشرح كيف تبني عضلات حقيقية وتتجنب إضاعة الوقت، مع مقارنة علمية وتطبيق عملي."
+        content: "اكتب الكاروسيل والكابشن المفصل بالكامل ملتزماً بهيكل الشرح العلمي وزبدة الموضوع."
       }
     ]
   });
 
-  const postData = JSON.parse(completion.choices[0].message.content);
+  let rawContent = completion.choices[0].message.content.trim();
+  if (rawContent.startsWith("```json")) rawContent = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  const postData = JSON.parse(rawContent);
   const slidesSummary = postData.slides.map(s => `• شريحة ${s.slide_number}: ${s.text_ar} ${s.text_en}`).join("\n");
-  await sendTelegram(`✅ 3/4: تم تجهيز الكاروسيل الكامل (6 شرائح) عبر موديل (${chosenModel})!\n\n📌 *الموضوع:* ${postData.topic}\n\n🖼️ *الشرائح:*\n${slidesSummary}\n\n📝 *الكابشن:*\n${postData.caption}`);
+  
+  await sendTelegram(`✅ 3/4: تم تجهيز الكاروسيل العلمي التفصيلي!\n\n📌 *الموضوع:* ${postData.topic}\n📚 *الدراسة:* ${study.researcher}\n🔗 *رابط البحث:* ${study.pubmed_url}\n\n🖼️ *الشرائح:*\n${slidesSummary}\n\n📝 *الكابشن وزبدة الموضوع:*\n${postData.caption}`);
 
   const imageUrls = postData.slides.map((slide, idx) => {
     const prompt = encodeURIComponent(`${slide.image_prompt}, slide ${idx + 1}`);
-    return `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&seed=${900 + idx}&nologo=true`;
+    return `[https://image.pollinations.ai/prompt/$](https://image.pollinations.ai/prompt/$){prompt}?width=1080&height=1350&seed=${1000 + idx}&nologo=true`;
   });
 
   for (const [index, url] of imageUrls.entries()) {
     try {
-      await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, {
+      await fetch(`[https://api.telegram.org/bot$](https://api.telegram.org/bot$){TG_TOKEN}/sendPhoto`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -142,10 +185,12 @@ async function runDailyAgent() {
     params: pubParams
   });
 
-  await sendTelegram(`🎉 4/4: مبروك يا كابتن حسين! تم نشر الكاروسيل الكامل (6 شرائح) رسمياً على حسابك @hu.gym! 🔥`);
+  await sendTelegram(`🎉 4/4: مبروك يا كابتن! تم نشر الكاروسيل التفصيلي وزبدة الموضوع بنجاح على صفحتك @hu.gym! 🔥\nرابط الدراسة: ${study.pubmed_url}`);
 }
 
 runDailyAgent().catch(async (err) => {
-  await sendTelegram(`❌ حدث خطأ:\n${err.message}`);
+  const errMsg = err?.message || String(err);
+  console.error("خطأ:", errMsg);
+  await sendTelegram(`❌ حدث خطأ:\n${errMsg}`);
   process.exit(1);
 });

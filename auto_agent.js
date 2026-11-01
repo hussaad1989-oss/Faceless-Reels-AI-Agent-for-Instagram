@@ -20,7 +20,6 @@ async function sendTelegram(text) {
 async function runDailyAgent() {
   await sendTelegram("✅ 1/4: اتصال تيليجرام شغال 100% يا كابتن حسين!\nجارٍ فحص باقي الخطوات...");
 
-  // 1. فحص Composio مع تمرير actionName المطلوب
   const composio = new OpenAIToolSet({ apiKey: (process.env.COMPOSIO_API_KEY || "").trim() });
   const entity = await composio.getEntity("default");
 
@@ -41,19 +40,20 @@ async function runDailyAgent() {
 
   await sendTelegram(`✅ 2/4: اتصال إنستغرام عبر Composio متصل بنجاح!\nالحساب: @${igUsername}`);
 
-  // 2. فحص واختيار الموديل المتاح تلقائياً من حساب Groq
+  // استبعاد موديلات الحماية (guard/whisper) واختيار موديل المحادثة الفعلي
   const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || "").trim() });
   const modelsList = await groq.models.list();
-  const availableModels = modelsList.data.map(m => m.id);
-  console.log("الموديلات المتاحة في حسابك على Groq:", availableModels);
+  
+  const chatModels = modelsList.data
+    .map(m => m.id)
+    .filter(id => !id.includes("guard") && !id.includes("whisper") && !id.includes("safeguard"));
 
-  // اختيار أول موديل يدعم المحادثة من حسابك تلقائياً
-  const chosenModel = availableModels.find(id => 
-    id.includes("llama") || id.includes("gpt-oss") || id.includes("mixtral") || id.includes("gemma")
-  ) || availableModels[0];
+  console.log("الموديلات المتاحة للمحادثة:", chatModels);
 
-  console.log("🎯 تم اختيار الموديل:", chosenModel);
+  const chosenModel = chatModels.find(id => id.includes("llama-3") || id.includes("mixtral") || id.includes("gemma")) || chatModels[0];
+  console.log("🎯 الموديل المختار:", chosenModel);
 
+  // توليد كاروسيل احترافي من 6 شرائح بهوية حسابك
   const completion = await groq.chat.completions.create({
     model: chosenModel,
     response_format: { type: "json_object" },
@@ -61,7 +61,8 @@ async function runDailyAgent() {
       {
         role: "system",
         content: `أنت المدرب والباحث حسين من العراق، مدرب معتمد من Menno Henselmans وصاحب حساب @hu.gym.
-اكتب بوست كاروسيل من 4 شرائح لمبتدئي الجيم يجمع بين العلم المبني على الدلائل، واللهجة العراقية الفصيحة، والمصطلحات الإنجليزية بين قوسين.
+اكتب بوست كاروسيل متكامل من 6 شرائح لمبتدئي الجيم يجمع بين العلم المبني على الدلائل، واللهجة العراقية الفصيحة، والمصطلحات الإنجليزية بين قوسين.
+التزم بهوية الألوان (عنوان عربي عريض أصفر كريمي مع إطار أسود، وترجمة إنجليزية بيضاء) والشخصية الكرتونية الرياضية الثابتة.
 أخرج النتيجة بصيغة JSON حصراً بهذا الشكل:
 {
   "topic": "عنوان الموضوع",
@@ -71,26 +72,25 @@ async function runDailyAgent() {
       "slide_number": 1,
       "text_ar": "النص العربي للشريحة",
       "text_en": "(English Subtitle)",
-      "image_prompt": "2D 3D anime comic illustration of handsome athletic 28yo Iraqi fitness coach, short black beard, black gym tank top, modern gym background, clean sharp anime art, 4:5 ratio"
+      "image_prompt": "2D 3D anime comic illustration of handsome athletic 28yo Iraqi fitness coach, short black beard, black sleeveless gym tank top, in modern bright gym, bold warm cream yellow text styling, sharp clean anime art, 4:5 ratio"
     }
   ]
 }`
       },
       {
         role: "user",
-        content: "اكتب الجزء الثاني لسلسلة المبتدئين عن خرافة الراحة القصيرة أو الزيادة التدريجية."
+        content: "اكتب كاروسيل علمي من 6 شرائح للمبتدئين يشرح كيف تبني عضلات حقيقية وتتجنب إضاعة الوقت، مع مقارنة علمية وتطبيق عملي."
       }
     ]
   });
 
   const postData = JSON.parse(completion.choices[0].message.content);
   const slidesSummary = postData.slides.map(s => `• شريحة ${s.slide_number}: ${s.text_ar} ${s.text_en}`).join("\n");
-  await sendTelegram(`✅ 3/4: تم توليد الكاروسيل بنجاح عبر موديل (${chosenModel})!\n\n📌 *الموضوع:* ${postData.topic}\n\n🖼️ *الشرائح:*\n${slidesSummary}\n\n📝 *الكابشن:*\n${postData.caption}`);
+  await sendTelegram(`✅ 3/4: تم تجهيز الكاروسيل الكامل (6 شرائح) عبر موديل (${chosenModel})!\n\n📌 *الموضوع:* ${postData.topic}\n\n🖼️ *الشرائح:*\n${slidesSummary}\n\n📝 *الكابشن:*\n${postData.caption}`);
 
-  // 3. تجهيز روابط صور Flux المجانية وإرسالها لتيليجرام
   const imageUrls = postData.slides.map((slide, idx) => {
     const prompt = encodeURIComponent(`${slide.image_prompt}, slide ${idx + 1}`);
-    return `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&seed=${800 + idx}&nologo=true`;
+    return `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&seed=${900 + idx}&nologo=true`;
   });
 
   for (const [index, url] of imageUrls.entries()) {
@@ -107,7 +107,6 @@ async function runDailyAgent() {
     } catch (e) {}
   }
 
-  // 4. رفع ونشر الكاروسيل على إنستغرام عبر Composio
   const childIds = [];
   for (const url of imageUrls) {
     const params = { image_url: url, is_carousel_item: true };
@@ -143,7 +142,7 @@ async function runDailyAgent() {
     params: pubParams
   });
 
-  await sendTelegram(`🎉 4/4: مبروك يا كابتن حسين! تم نشر الكاروسيل رسمياً على حسابك @hu.gym! 🔥`);
+  await sendTelegram(`🎉 4/4: مبروك يا كابتن حسين! تم نشر الكاروسيل الكامل (6 شرائح) رسمياً على حسابك @hu.gym! 🔥`);
 }
 
 runDailyAgent().catch(async (err) => {

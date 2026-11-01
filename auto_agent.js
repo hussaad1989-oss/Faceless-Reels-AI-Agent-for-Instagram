@@ -1,8 +1,8 @@
 import Groq from "groq-sdk";
-import { OpenAIToolSet } from "composio-core";
 
 const TG_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const TG_CHAT = (process.env.TELEGRAM_CHAT_ID || "").replace(/[^0-9-]/g, "");
+const COMPOSIO_KEY = (process.env.COMPOSIO_API_KEY || "").trim();
 
 async function sendTelegram(text) {
   try {
@@ -13,184 +13,291 @@ async function sendTelegram(text) {
     });
     return await res.json();
   } catch (e) {
-    console.error("خطأ تيليجرام:", e?.message || e);
+    console.error("Telegram error:", e);
   }
 }
 
-// بنك دراسات علمية عميقة (دراسة واحدة مفصلة لكل يوم بالتفصيل العلمي والعملي)
+// 1. جلب الحساب المربوط (@hu.gym / rifi-fanwe) مباشرة من سيرفر Composio الرسمي
+async function getInstagramConnection() {
+  const urls = [
+    "https://backend.composio.dev/api/v3/connected_accounts?toolkit_slug=instagram",
+    "https://backend.composio.dev/api/v3/connected_accounts",
+    "https://backend.composio.dev/api/v1/connectedAccounts"
+  ];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { headers: { "x-api-key": COMPOSIO_KEY } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const items = data.items || data || [];
+      if (Array.isArray(items) && items.length > 0) {
+        const ig = items.find(i =>
+          (i.toolkit?.slug?.toLowerCase() === "instagram" || i.appName?.toLowerCase() === "instagram") &&
+          (i.status === "ACTIVE" || i.status === "active")
+        ) || items.find(i => i.alias === "rifi-fanwe") || items[0];
+        if (ig) {
+          return {
+            connectedAccountId: ig.id || ig.nanoid,
+            userId: ig.user_id || ig.entityId || ig.clientUniqueUserId || "default",
+            alias: ig.alias || "rifi-fanwe"
+          };
+        }
+      }
+    } catch (e) {}
+  }
+  return { connectedAccountId: null, userId: "default", alias: "rifi-fanwe" };
+}
+
+// 2. تنفيذ أوامر إنستغرام مباشرة عبر واجهة Composio REST API (بدون أخطاء composio-core)
+async function executeComposioTool(toolSlug, args, conn) {
+  const v3Body = { arguments: args };
+  if (conn.connectedAccountId) v3Body.connected_account_id = conn.connectedAccountId;
+  if (conn.userId) v3Body.user_id = conn.userId;
+
+  const resV3 = await fetch(`https://backend.composio.dev/api/v3/tools/execute/${toolSlug}`, {
+    method: "POST",
+    headers: { "x-api-key": COMPOSIO_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(v3Body)
+  });
+  const textV3 = await resV3.text();
+  let dataV3 = {};
+  try { dataV3 = JSON.parse(textV3); } catch (e) { dataV3 = { raw: textV3 }; }
+
+  if (resV3.ok && dataV3.successful !== false && !dataV3.error) {
+    return dataV3.data || dataV3;
+  }
+
+  const v2Body = { input: args, appName: "instagram" };
+  if (conn.connectedAccountId) v2Body.connectedAccountId = conn.connectedAccountId;
+  if (conn.userId) v2Body.entityId = conn.userId;
+
+  const resV2 = await fetch(`https://backend.composio.dev/api/v2/actions/${toolSlug}/execute`, {
+    method: "POST",
+    headers: { "x-api-key": COMPOSIO_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(v2Body)
+  });
+  const textV2 = await resV2.text();
+  let dataV2 = {};
+  try { dataV2 = JSON.parse(textV2); } catch (e) { dataV2 = { raw: textV2 }; }
+
+  if (resV2.ok && dataV2.successful !== false && !dataV2.error) {
+    return dataV2.data || dataV2;
+  }
+
+  const errDetail = JSON.stringify(dataV3.error || dataV2.error || dataV3 || dataV2);
+  throw new Error(`(${toolSlug}): ${errDetail}`);
+}
+
+// 3. تحميل صورة الشريحة ورفعها كملف JPEG حقيقي لتيليجرام واستخراج رابط .jpg مباشر لإنستغرام
+async function generateAndUploadSlide(slide, index) {
+  const prompt = encodeURIComponent(`${slide.image_prompt}, 4:5 vertical portrait, high quality anime fitness art`);
+  const urlsToTry = [
+    `https://image.pollinations.ai/prompt/${prompt}?width=1080&height=1350&seed=${3030 + index}&nologo=true`,
+    `https://picsum.photos/seed/${3030 + index}/1080/1350.jpg`
+  ];
+
+  let imgBuffer = null;
+  for (const u of urlsToTry) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
+      const res = await fetch(u, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const ab = await res.arrayBuffer();
+        if (ab.byteLength > 5000) {
+          imgBuffer = Buffer.from(ab);
+          break;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (!imgBuffer) {
+    throw new Error(`تعذر تحميل صورة الشريحة ${index + 1}`);
+  }
+
+  const form = new FormData();
+  form.append("chat_id", TG_CHAT);
+  form.append("caption", `🖼️ شريحة ${slide.slide_number}/6:\n${slide.text_ar}\n${slide.text_en}`);
+  form.append("photo", new Blob([imgBuffer], { type: "image/jpeg" }), `slide_${index + 1}.jpg`);
+
+  const tgRes = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, {
+    method: "POST",
+    body: form
+  });
+  const tgData = await tgRes.json();
+
+  if (tgData.ok && tgData.result?.photo?.length > 0) {
+    const bestPhoto = tgData.result.photo[tgData.result.photo.length - 1];
+    const fileRes = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getFile?file_id=${bestPhoto.file_id}`);
+    const fileData = await fileRes.json();
+    if (fileData.ok && fileData.result?.file_path) {
+      return `https://api.telegram.org/file/bot${TG_TOKEN}/${fileData.result.file_path}`;
+    }
+  }
+
+  return urlsToTry[0];
+}
+
+// 4. دراسة علمية واحدة متكاملة ومفصلة بـ 6 شرائح مع زبدة الموضوع ورابط PubMed
 const STUDIES_DATABASE = [
   {
-    topic: "خرافة الراحة دقيقة واحدة: ليش ترتاح 3 دقائق حتى تبني ضعف العضلات؟",
-    researcher: "Schoenfeld et al. (2016)",
-    journal: "Journal of Strength and Conditioning Research",
+    topic: "خرافة الراحة 60 ثانية: ليش الراحة 3 دقائق تبني ضعف العضلات؟",
+    researcher: "Schoenfeld et al. (2016) - Journal of Strength & Conditioning Research",
     pubmed_url: "https://pubmed.ncbi.nlm.nih.gov/26605807/",
-    experiment: "قسّموا المتدربين لمجموعتين لـ 8 أسابيع بنفس التمارين: مجموعة ترتاح 60 ثانية، ومجموعة ترتاح 3 دقائق كاملة بين الجولات.",
-    results: "مجموعة الـ 3 دقائق حققت تضخيماً عضلياً وزيادة في القوة تعادل ضعف مجموعة الدقيقة الواحدة! لأن العضلة تسترجع مخازن الـ ATP بالكامل وتشيل أوزان وجودة أعلى.",
-    application: "بالتمارين المركبة (بنش، سكوات، ديدليفت): عوف الموبايل وارتاح 2.5 إلى 3 دقائق كاملة. بتمارين العزل (باي، تراي): ارتاح دقيقة ونصف.",
-    takeaway_benefit: "راح تستفاد: أوزانك بالجم تصعد باستمرار، عضلاتك تكبر بجهد أقل وبدون إنهاك عصبي، وتختصر شهور من التخبط!"
-  },
-  {
-    topic: "كمية البروتين اليومية: ليش الـ 1.6 غرام كافية وخرافة الـ 3 غرام تضيع فلوسك؟",
-    researcher: "Morton et al. (2018) & Menno Henselmans",
-    journal: "British Journal of Sports Medicine",
-    pubmed_url: "https://pubmed.ncbi.nlm.nih.gov/28698222/",
-    experiment: "حللوا 49 دراسة علمية على أكثر من 1800 متدرب لمعرفة أقصى كمية بروتين يستجيب لها تخليق البروتين العضلي (MPS).",
-    results: "فوق 1.6 غرام بروتين لكل كغم من وزن الجسم، توقفت العضلات عن الاستفادة الإضافية تماماً، والزيادة تحولت لطاقة عادية دون أي بناء عضلي زائد.",
-    application: "اضرب وزن جسمك في 1.6 إلى 1.8 فقط ووزعها على 3-4 وجبات يومية غنية بالأحماض الأمينية (Leucine).",
-    takeaway_benefit: "راح تستفاد: توفر فلوس المكملات والأكل الزائد، تتخلص من مشاكل الهضم، وتغذي عضلاتك بالرقم العلمي المثبت 100%!"
-  },
-  {
-    topic: "المدى الحركي الكامل (Full ROM): ليش نصف النزول بالوزن الثقيل يضيع وقتك؟",
-    researcher: "Pallarés et al. (2021) & Wolf et al. (2023)",
-    journal: "European Journal of Applied Physiology",
-    pubmed_url: "https://pubmed.ncbi.nlm.nih.gov/33977835/",
-    experiment: "قارنوا بين مجموعتين: الأولى تتمرن بمدى حركي كامل مع إطالة العضلة للآخر، والثانية بنصف مدى حركي وأوزان أثقل بكثير.",
-    results: "المدى الحركي الكامل حقق نمواً عضلياً أعلى بـ 30%، لأن وضعية الإطالة تحت الوزن تحفز نمواً فسيولوجياً خاصاً يسمى (Stretch-Mediated Hypertrophy).",
-    application: "قلل الوزن 20%، انزل لآخر مدى حركي مريح للمفصل، واثبت ثانية واحدة بأسفل التكرار قبل الدفع.",
-    takeaway_benefit: "راح تستفاد: تحمي مفاصلك وأوتارك من الإصابات، وتحفز كل ألياف العضلة بوزن خفيف وأمان كامل!"
+    slides: [
+      {
+        slide_number: 1,
+        text_ar: "ليش ترتاح دقيقة وحدة بس بين الجولات؟ خرافة دتضيع تعبك بالجم!",
+        text_en: "(Short vs. Long Rest Intervals - Science Based)",
+        image_prompt: "2D 3D anime comic illustration of handsome athletic 28yo Middle Eastern fitness coach, short faded black hair, neatly groomed short black beard, wearing black sleeveless gym tank top, holding a stopwatch with confident smile in modern bright gym with dumbbells, clean sharp line art"
+      },
+      {
+        slide_number: 2,
+        text_ar: "الغلط الشائع: تدخل الجولة الثانية وأنت تلهث، فيقل وزنك وتنزل عداتك للنص!",
+        text_en: "(The Mistake: Rushing Sets & Losing Mechanical Tension)",
+        image_prompt: "2D 3D anime comic illustration of handsome athletic Middle Eastern fitness coach with short black beard in black tank top, pointing out a tired gym beginner struggling with dumbbells in a modern gym"
+      },
+      {
+        slide_number: 3,
+        text_ar: "التجربة العلمية (Schoenfeld 2016): مجموعتين لـ 8 أسابيع، الأولى ترتاح دقيقة والثانية 3 دقائق.",
+        text_en: "(The Experiment: 1-Min vs. 3-Min Rest Over 8 Weeks)",
+        image_prompt: "2D 3D anime comic illustration of handsome athletic Middle Eastern fitness coach with short black beard in black tank top, explaining a scientific hypertrophy chart in a modern gym"
+      },
+      {
+        slide_number: 4,
+        text_ar: "النتيجة بالأرقام: مجموعة الـ 3 دقائق بنت عضلات وقوة أكثر بالضعف لأن طاقة الـ ATP ترجع كاملة!",
+        text_en: "(The Data: Double Muscle Thickness & Strength Gains)",
+        image_prompt: "2D 3D anime comic illustration of handsome athletic Middle Eastern fitness coach with short black beard in black tank top, performing heavy dumbbell curls with intense muscular definition in a bright gym"
+      },
+      {
+        slide_number: 5,
+        text_ar: "شلون تطبقها بتمرينك؟ بالتمارين المركبة ارتاح 3 دقائق، وبتمارين العزل دقيقة ونص إلى دقيقتين.",
+        text_en: "(Gym Protocol: 3 Min for Compounds, 1.5-2 Min for Isolation)",
+        image_prompt: "2D 3D anime comic illustration of handsome athletic Middle Eastern fitness coach with short black beard in black tank top, demonstrating strict barbell bench press form in a modern gym"
+      },
+      {
+        slide_number: 6,
+        text_ar: "زبدة الموضوع: شنو راح تستفاد؟ أوزانك تصعد كل أسبوع، عضلاتك تكبر أسرع بالضعف، وبدون إجهاد عصبي!",
+        text_en: "(Bottom Line: Lift Heavier, Grow Faster, Follow @hu.gym)",
+        image_prompt: "2D 3D anime comic illustration of handsome athletic Middle Eastern fitness coach with short black beard in black tank top, giving a confident thumbs up in a bright modern gym"
+      }
+    ],
+    caption: `هواي مبتدئين بالجم يتوقعون إذا ما يطلع من التمرين يلهث وعركان، يعني ما تمرن صح.. فيرتاح 30 لو 60 ثانية بس بين الجولات! ⏱️❌
+
+علمياً (Evidence-Based Training)، العضلة ما تكبر من اللهاث والعرك، العضلة تكبر من التوتر الميكانيكي (Mechanical Tension) وحجم التمرين الكلي (Total Volume).
+
+🔬 تفاصيل الدراسة العلمية الموثقة:
+في دراسة الدكتور براد شونفيلد (Schoenfeld et al., 2016) المنشورة بمجلة Journal of Strength and Conditioning Research:
+قسّموا المتدربين لمجموعتين لمدة 8 أسابيع بنفس التمارين بالضبط:
+• المجموعة الأولى: ارتاحت دقيقة واحدة فقط (60 ثانية) بين الجولات.
+• المجموعة الثانية: ارتاحت 3 دقائق كاملة بين الجولات.
+
+📊 النتيجة بالأرقام:
+المجموعة اللي ارتاحت 3 دقائق زادت سماكة عضلاتها (Muscle Hypertrophy) وقوتها بالسكوات والبنش بريس بأكثر من الضعف مقارنة بمجموعة الدقيقة الواحدة! السبب الفسيولوجي أن الراحة الكافية تخلي مخازن الطاقة بالعضلة (ATP-CP) ترجع تقبط، ويهدأ التعب المركزي، فتكدر تلعب الجولة الجاية بنفس القوة والعدات بدون ما ينهار أداؤك.
+
+✅ شلون تطبقها بتمرينك من باجر؟
+1. بالتمارين المركبة الثقيلة (سكوات، بنش بريس، ديدليفت، سحب ظهر): ارتاح من 2.5 إلى 3 دقائق كاملة.
+2. بتمارين العزل الصغيرة (بايسبس، ترايسبس، رفرفة كتف): ارتاح من دقيقة ونصف إلى دقيقتين.
+
+💡 زبدة الموضوع (شنو راح تستفاد من هذا الحجي؟):
+إذا تطبق هاي النصيحة من تمرين باجر، راح تشيل أوزان أعلى بجودة وتكنيك أضبط، تحمي جهازك العصبي ومفاصلك من الإصابات، وتبني عضل صافي أسرع بالضعف بدل التعب الضايع!
+
+🔗 رابط الدراسة الأصلية على PubMed للمراجعة:
+https://pubmed.ncbi.nlm.nih.gov/26605807/
+
+💬 اكتبلي بالتعليقات: شكد جنت ترتاح بين الجولات عادةً؟ ولا تنسى تحفظ البوست عندك وتتابع @hu.gym 💪
+
+#DubaiFitness #UAEGym #لياقة_دبي #DubaiPersonalTrainer #تمارين_الامارات`
   }
 ];
 
 async function runDailyAgent() {
-  await sendTelegram("✅ 1/4: فحص اتصال تيليجرام بنجاح يا كابتن حسين!");
+  await sendTelegram("✅ 1/4: اتصال تيليجرام شغال 100% يا كابتن حسين!\n⏳ جارٍ التحقق المباشر من حساب إنستغرام (@hu.gym)...");
 
-  const composio = new OpenAIToolSet({ apiKey: (process.env.COMPOSIO_API_KEY || "").trim() });
-  const entity = await composio.getEntity("default");
-
+  const conn = await getInstagramConnection();
   let igUserId = null;
   let igUsername = "hu.gym";
 
   try {
-    const userInfo = await entity.execute({
-      actionName: "INSTAGRAM_GET_USER_INFO",
-      action: "INSTAGRAM_GET_USER_INFO",
-      params: { fields: "id,username,name" }
-    });
-    igUserId = userInfo?.data?.id || userInfo?.data?.ig_user_id || userInfo?.id;
-    if (userInfo?.data?.username) igUsername = userInfo.data.username;
+    const userInfo = await executeComposioTool("INSTAGRAM_GET_USER_INFO", {}, conn);
+    igUserId = userInfo?.id || userInfo?.ig_user_id || userInfo?.data?.id;
+    if (userInfo?.username || userInfo?.data?.username) {
+      igUsername = userInfo.username || userInfo.data.username;
+    }
   } catch (err) {
-    console.warn("استخدام المعرف التلقائي:", err?.message || err);
+    console.warn("User info note:", err.message);
   }
 
-  await sendTelegram(`✅ 2/4: اتصال إنستغرام عبر Composio متصل بنجاح!\nالحساب: @${igUsername}`);
+  await sendTelegram(`✅ 2/4: اتصال إنستغرام عبر Composio جاهز!\n👤 الحساب: @${igUsername} (${conn.alias})`);
 
-  // اختيار موضوع علمي واحد فقط للتعمق فيه بالكامل
-  const study = STUDIES_DATABASE[Math.floor(Math.random() * STUDIES_DATABASE.length)];
+  const postData = STUDIES_DATABASE[0];
 
-  const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || "").trim() });
-  const modelsList = await groq.models.list();
-  const chatModels = modelsList.data
-    .map(m => m.id)
-    .filter(id => !id.includes("guard") && !id.includes("whisper") && !id.includes("safeguard"));
+  const slidesSummary = postData.slides
+    .map(s => `• شريحة ${s.slide_number}: ${s.text_ar}\n  ${s.text_en}`)
+    .join("\n\n");
 
-  const chosenModel = chatModels.find(id => id.includes("llama-3") || id.includes("mixtral") || id.includes("gemma")) || chatModels[0];
+  await sendTelegram(`✅ 3/4: تم تجهيز البوست العلمي المفصل (6 شرائح كاملة + زبدة الموضوع)!\n\n📌 الموضوع: ${postData.topic}\n📚 المصدر: ${postData.researcher}\n🔗 رابط الدراسة: ${postData.pubmed_url}\n\n🖼️ نصوص الشرائح الـ 6:\n${slidesSummary}`);
+  await sendTelegram(`📝 الكابشن الكامل الجاهز للنشر:\n\n${postData.caption}`);
 
-  const completion = await groq.chat.completions.create({
-    model: chosenModel,
-    messages: [
-      {
-        role: "system",
-        content: `أنت المدرب والباحث حسين من العراق، مدرب معتمد من Menno Henselmans وصاحب حساب @hu.gym.
-اكتب بوست كاروسيل من 6 شرائح لمبتدئي الجيم يركز على دراسة علمية واحدة فقط ويشرحها بالتفصيل الممل بأسلوب عراقي علمي فصيح ومحبب، وينتهي دائماً بـ "زبدة الموضوع: شنو راح تستفاد من هذا الحجي؟".
+  await sendTelegram("🎨 جارٍ الآن رسم وتوليد الشرائح الـ 6 بشخصية كابتن حسين وإرسالها لك صورة بصورة...");
 
-بيانات الدراسة العلمية المعتمدة:
-- موضوع البوست: ${study.topic}
-- الباحث والمصدر: ${study.researcher} في ${study.journal}
-- تفاصيل التجربة: ${study.experiment}
-- النتيجة والفسيولوجيا: ${study.results}
-- التطبيق العملي بالجم: ${study.application}
-- زبدة الموضوع وفائدته للمبتدئ: ${study.takeaway_benefit}
-- رابط البحث على PubMed: ${study.pubmed_url}
-
-المطلوب: إرجاع النتيجة حصراً بصيغة JSON:
-{
-  "topic": "${study.topic}",
-  "caption": "كابشن عراقي مفصل ومقنع ككوتش فاهم، يشرح التجربة والأرقام، ويبرز فقرة 'زبدة الموضوع: شنو تستفاد؟'، ومذيل برابط الدراسة: ${study.pubmed_url} و5 هاشتاغات للإمارات (#DubaiFitness #UAEGym #لياقة_دبي #DubaiPersonalTrainer #تمارين_الامارات)",
-  "slides": [
-    { "slide_number": 1, "text_ar": "${study.topic}", "text_en": "(Evidence-Based Gym Guide)", "image_prompt": "2D 3D anime comic illustration handsome athletic 28yo Iraqi fitness coach, short black beard, black gym tank top, bright modern gym, bold cream yellow text style, 4:5 ratio" },
-    { "slide_number": 2, "text_ar": "الغلط اللي يوكع بيه أغلب المبتدئين بالجم", "text_en": "(The Common Mistake)", "image_prompt": "2D 3D anime comic illustration coach observing tired gym beginner making a training mistake in gym, 4:5 ratio" },
-    { "slide_number": 3, "text_ar": "شنو سوت التجربة العلمية بالضبط؟ (${study.researcher})", "text_en": "(The Scientific Experiment)", "image_prompt": "2D 3D anime comic illustration coach explaining research data board in gym, 4:5 ratio" },
-    { "slide_number": 4, "text_ar": "النتيجة بالأرقام والفسيولوجيا", "text_en": "(The Real Science & Data)", "image_prompt": "2D 3D anime comic illustration coach explaining muscle fibers and energy recovery, 4:5 ratio" },
-    { "slide_number": 5, "text_ar": "التطبيق العملي: شلون تسويها بتمرينك من باجر؟", "text_en": "(Step-by-Step Gym Protocol)", "image_prompt": "2D 3D anime comic illustration coach demonstrating strict perfect exercise execution in gym, 4:5 ratio" },
-    { "slide_number": 6, "text_ar": "زبدة الموضوع: شنو راح تستفاد من هذا الحجي؟", "text_en": "(The Bottom Line & Benefits)", "image_prompt": "2D 3D anime comic illustration coach giving confident thumbs up with scientific study notes in gym, 4:5 ratio" }
-  ]
-}`
-      },
-      {
-        role: "user",
-        content: "اكتب الكاروسيل والكابشن المفصل بالكامل ملتزماً بهيكل الشرح العلمي وزبدة الموضوع."
-      }
-    ]
-  });
-
-  let rawContent = completion.choices[0].message.content.trim();
-  if (rawContent.startsWith("```json")) rawContent = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
-
-  const postData = JSON.parse(rawContent);
-  const slidesSummary = postData.slides.map(s => `• شريحة ${s.slide_number}: ${s.text_ar} ${s.text_en}`).join("\n");
-  
-  await sendTelegram(`✅ 3/4: تم تجهيز الكاروسيل العلمي التفصيلي!\n\n📌 *الموضوع:* ${postData.topic}\n📚 *الدراسة:* ${study.researcher}\n🔗 *رابط البحث:* ${study.pubmed_url}\n\n🖼️ *الشرائح:*\n${slidesSummary}\n\n📝 *الكابشن وزبدة الموضوع:*\n${postData.caption}`);
-
-  const imageUrls = postData.slides.map((slide, idx) => {
-    const prompt = encodeURIComponent(`${slide.image_prompt}, slide ${idx + 1}`);
-    return `[https://image.pollinations.ai/prompt/$](https://image.pollinations.ai/prompt/$){prompt}?width=1080&height=1350&seed=${1000 + idx}&nologo=true`;
-  });
-
-  for (const [index, url] of imageUrls.entries()) {
-    try {
-      await fetch(`[https://api.telegram.org/bot$](https://api.telegram.org/bot$){TG_TOKEN}/sendPhoto`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: TG_CHAT,
-          photo: url,
-          caption: `شريحة ${index + 1}: ${postData.slides[index].text_ar}\n${postData.slides[index].text_en}`
-        })
-      });
-    } catch (e) {}
+  const hostedImageUrls = [];
+  for (let i = 0; i < postData.slides.length; i++) {
+    const directJpgUrl = await generateAndUploadSlide(postData.slides[i], i);
+    hostedImageUrls.push(directJpgUrl);
   }
+
+  await sendTelegram("📤 اكتمل توليد الصور الـ 6! جارٍ الآن رفعها ونشر الكاروسيل على حسابك @hu.gym في إنستغرام...");
 
   const childIds = [];
-  for (const url of imageUrls) {
-    const params = { image_url: url, is_carousel_item: true };
-    if (igUserId) params.ig_user_id = igUserId;
+  for (let i = 0; i < hostedImageUrls.length; i++) {
+    const url = hostedImageUrls[i];
+    const itemArgs = { image_url: url, is_carousel_item: true, media_type: "IMAGE" };
+    if (igUserId) itemArgs.ig_user_id = String(igUserId);
 
-    const itemRes = await entity.execute({
-      actionName: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
-      action: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
-      params
-    });
-    const cid = itemRes?.data?.id || itemRes?.id;
-    if (cid) childIds.push(cid);
+    let itemRes;
+    try {
+      itemRes = await executeComposioTool("INSTAGRAM_CREATE_MEDIA_CONTAINER", itemArgs, conn);
+    } catch (e1) {
+      itemRes = await executeComposioTool("INSTAGRAM_POST_IG_USER_MEDIA", itemArgs, conn);
+    }
+    const cid = itemRes?.id || itemRes?.data?.id || itemRes?.creation_id;
+    if (!cid) throw new Error(`لم يتم استلام معرف الشريحة ${i + 1}: ${JSON.stringify(itemRes)}`);
+    childIds.push(String(cid));
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  const carouselParams = { children: childIds, caption: postData.caption };
-  if (igUserId) carouselParams.ig_user_id = igUserId;
+  const carouselArgs = {
+    children: childIds,
+    caption: postData.caption,
+    media_type: "CAROUSEL"
+  };
+  if (igUserId) carouselArgs.ig_user_id = String(igUserId);
 
-  const carouselRes = await entity.execute({
-    actionName: "INSTAGRAM_CREATE_CAROUSEL_CONTAINER",
-    action: "INSTAGRAM_CREATE_CAROUSEL_CONTAINER",
-    params: carouselParams
-  });
-  const creationId = carouselRes?.data?.id || carouselRes?.id;
+  const carouselRes = await executeComposioTool("INSTAGRAM_CREATE_CAROUSEL_CONTAINER", carouselArgs, conn);
+  const creationId = carouselRes?.id || carouselRes?.data?.id || carouselRes?.creation_id;
+  if (!creationId) throw new Error(`لم يتم استلام معرف الكاروسيل: ${JSON.stringify(carouselRes)}`);
 
-  await new Promise(r => setTimeout(r, 6000));
+  await new Promise(r => setTimeout(r, 10000));
 
-  const pubParams = { creation_id: creationId };
-  if (igUserId) pubParams.ig_user_id = igUserId;
+  const publishArgs = { creation_id: String(creationId) };
+  if (igUserId) publishArgs.ig_user_id = String(igUserId);
 
-  await entity.execute({
-    actionName: "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
-    action: "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
-    params: pubParams
-  });
+  let publishRes;
+  try {
+    publishRes = await executeComposioTool("INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", publishArgs, conn);
+  } catch (ePub) {
+    publishRes = await executeComposioTool("INSTAGRAM_CREATE_POST", publishArgs, conn);
+  }
 
-  await sendTelegram(`🎉 4/4: مبروك يا كابتن! تم نشر الكاروسيل التفصيلي وزبدة الموضوع بنجاح على صفحتك @hu.gym! 🔥\nرابط الدراسة: ${study.pubmed_url}`);
+  await sendTelegram(`🎉 4/4: تم بحمد الله نشر الكاروسيل العلمي الكامل (6 شرائح + زبدة الموضوع + رابط PubMed) على حسابك @hu.gym في إنستغرام بنجاح! 🔥💪`);
 }
 
 runDailyAgent().catch(async (err) => {
   const errMsg = err?.message || String(err);
-  console.error("خطأ:", errMsg);
-  await sendTelegram(`❌ حدث خطأ:\n${errMsg}`);
+  console.error("❌ Error:", errMsg);
+  await sendTelegram(`❌ توقف عند خطوة النشر للتشخيص:\n${String(errMsg).substring(0, 900)}`);
   process.exit(1);
 });
